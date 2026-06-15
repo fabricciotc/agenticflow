@@ -119,6 +119,61 @@ def get_log_path():
     return get_board_path().parent / "run.log"
 
 
+def get_ticket_snapshot_path(ticket_id):
+    """Ruta del snapshot de run-state para un ticket pausado."""
+    return get_run_state_path().parent / f"run-state.{ticket_id}.json"
+
+
+def save_ticket_snapshot(ticket_id, state):
+    """Guarda una copia del run-state actual para un ticket."""
+    path = get_ticket_snapshot_path(ticket_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    snapshot = dict(state)
+    snapshot["snapshotTicketId"] = ticket_id
+    snapshot["snapshotSavedAt"] = datetime.now(timezone.utc).isoformat()
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(snapshot, f, indent=2, ensure_ascii=False)
+    except (IOError, TypeError) as exc:
+        append_log(f"No se pudo guardar snapshot para {ticket_id}: {exc}", "error")
+
+
+def load_ticket_snapshot(ticket_id):
+    """Carga el snapshot de run-state de un ticket si existe."""
+    path = get_ticket_snapshot_path(ticket_id)
+    if not path.exists():
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, IOError) as exc:
+        append_log(f"No se pudo cargar snapshot para {ticket_id}: {exc}", "error")
+        return None
+
+
+def delete_ticket_snapshot(ticket_id):
+    """Elimina el snapshot de un ticket."""
+    path = get_ticket_snapshot_path(ticket_id)
+    if path.exists():
+        path.unlink()
+
+
+def list_ticket_snapshots():
+    """Devuelve los ticketIds que tienen snapshot en disco."""
+    parent = get_run_state_path().parent
+    if not parent.exists():
+        return []
+    ids = []
+    prefix = "run-state."
+    suffix = ".json"
+    for p in parent.iterdir():
+        if p.is_file() and p.name.startswith(prefix) and p.name.endswith(suffix):
+            ticket_id = p.name[len(prefix):-len(suffix)]
+            if ticket_id:
+                ids.append(ticket_id)
+    return ids
+
+
 def ensure_default_columns(board):
     """Migra el board para asegurar que tenga todas las columnas por defecto."""
     columns = board.get("columns", [])
@@ -1326,6 +1381,8 @@ Responde de forma concisa y práctica. Asume decisiones razonables para un MVP .
                     state["active"] = False
                     save_run_state(state)
             paused_run_threads.pop(self.ticket_id, None)
+            # Limpiar snapshot al terminar el run (done, failed o stop)
+            delete_ticket_snapshot(self.ticket_id)
 
     def _run_planner_and_execution(self):
         """Ejecuta las fases de Planning, Execution y QA. Usado durante un resume."""
@@ -2842,19 +2899,30 @@ Reporta los archivos modificados y el resultado de la build.
 
 
 def pause_active_ticket():
-    """Pausa el ticket que está corriendo actualmente y guarda su thread."""
+    """Pausa el ticket que está corriendo actualmente, guarda snapshot y conserva el thread."""
     global _active_run_thread
     with run_lock:
         state = load_run_state()
     if not state.get("active"):
         return False, "No hay ticket corriendo"
     ticket_id = state.get("ticketId")
+    if not ticket_id:
+        return False, "No hay ticket activo"
+
+    # Guardar snapshot del estado actual antes de limpiar el global
+    save_ticket_snapshot(ticket_id, state)
+
     if _active_run_thread and _active_run_thread.is_alive():
         _active_run_thread.pause()
         paused_run_threads[ticket_id] = _active_run_thread
         _active_run_thread = None
+        # Limpiar run-state global para que el dashboard no muestre el ticket anterior
+        reset_run_state_to_idle()
         return True, f"Ticket {ticket_id} pausado"
-    return False, "No se encontró runner activo"
+
+    # No hay runner vivo, pero igual dejamos el snapshot y limpiamos
+    reset_run_state_to_idle()
+    return True, f"Ticket {ticket_id} pausado (sin runner activo)"
 
 
 def play_ticket(ticket_id):
@@ -2879,23 +2947,40 @@ def play_ticket(ticket_id):
             return False, f"No se pudo pausar el ticket activo: {msg}"
         state = load_run_state()
 
-    # Reanudar thread pausado si existe
+    # Reanudar thread pausado en memoria
     if ticket_id in paused_run_threads:
         thread = paused_run_threads.pop(ticket_id)
         if thread.is_alive():
-            update_run_state({
+            snapshot = load_ticket_snapshot(ticket_id)
+            restored = {}
+            if snapshot:
+                restored = dict(snapshot)
+            restored.update({
                 "active": True,
                 "ticketId": ticket_id,
-                "status": state.get("status") or "running",
-                "currentAgent": state.get("currentAgent"),
+                "status": (snapshot.get("status") if snapshot else state.get("status")) or "running",
+                "currentAgent": snapshot.get("currentAgent") if snapshot else state.get("currentAgent"),
             })
+            update_run_state(restored)
             thread.resume()
             _active_run_thread = thread
+            delete_ticket_snapshot(ticket_id)
             return True, f"Ticket {ticket_id} reanudado"
 
-    # Iniciar desde cero o reanudar desde run-state guardado
-    resume = state.get("ticketId") == ticket_id and state.get("status") in ("paused", "in-design", "in-progress", "in-review")
-    started = start_automatic_run(ticket, resume=resume, queue_if_active=False)
+    # Reanudar desde snapshot en disco (reinicio o pausa previa sin thread vivo)
+    snapshot = load_ticket_snapshot(ticket_id)
+    if snapshot:
+        restored = dict(snapshot)
+        restored.update({"active": True, "ticketId": ticket_id})
+        update_run_state(restored)
+        started = start_automatic_run(ticket, resume=True, queue_if_active=False)
+        if started:
+            delete_ticket_snapshot(ticket_id)
+            return True, f"Ticket {ticket_id} reanudado desde snapshot"
+        return False, "No se pudo iniciar el runner desde snapshot"
+
+    # Iniciar desde cero
+    started = start_automatic_run(ticket, resume=False, queue_if_active=False)
     if started:
         return True, f"Ticket {ticket_id} iniciado"
     return False, "No se pudo iniciar el ticket"
@@ -3071,6 +3156,7 @@ def api_board():
 @app.route("/api/run-state", methods=["GET"])
 def api_run_state():
     state = load_run_state()
+    state["pausedTickets"] = list_ticket_snapshots()
     return jsonify(state)
 
 
@@ -3705,22 +3791,26 @@ def main():
     recompute_stats(board)
     save_board(board)
 
-    # Inicializar run-state y limpiar runs terminados/interrumpidos
+    # Inicializar run-state y preservar runs interrumpidos como snapshots
     state = load_run_state()
     if state.get("active"):
+        ticket_id = state.get("ticketId")
         if state.get("status") in ("completed", "failed"):
             state["active"] = False
-        else:
-            # El run quedó huérfano porque el proceso se cerró
+            if ticket_id:
+                delete_ticket_snapshot(ticket_id)
+        elif ticket_id:
+            # Guardar snapshot para poder reanudar tras reinicio
+            save_ticket_snapshot(ticket_id, state)
             append_log(
-                f"Run {state.get('ticketId')} interrumpido por reinicio del servidor. "
-                "Marcado como failed.",
-                "error",
+                f"Run {ticket_id} interrumpido por reinicio del servidor. "
+                "Snapshot guardado; puedes reanudarlo desde el dashboard.",
+                "warning",
             )
-            state["status"] = "failed"
+            reset_run_state_to_idle()
+            state = load_run_state()
+        else:
             state["active"] = False
-            state["currentAgent"] = None
-            state["interruptedByRestart"] = True
     save_run_state(state)
 
     # Reprogramar timers de preguntas pendientes

@@ -795,6 +795,7 @@ function getTicketRunStatus(ticketId) {
   if (runState.ticketId === ticketId) {
     return runState.active ? 'running' : 'paused';
   }
+  if ((runState.pausedTickets || []).includes(ticketId)) return 'paused';
   if ((runState.queue || []).includes(ticketId)) return 'queued';
   return 'idle';
 }
