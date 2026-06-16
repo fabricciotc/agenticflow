@@ -569,6 +569,66 @@ def _update_agent(state, agent_id, **kwargs):
     return None
 
 
+def _reconcile_stale_qa_agents(state) -> bool:
+    """Fix per-task QA agents left queued after QA lead completed."""
+    agents = state.get("agents") or []
+    agents_by_id = {agent.get("id"): agent for agent in agents}
+    qa_lead = agents_by_id.get("qa-engineer")
+    if not qa_lead or qa_lead.get("status") != "done":
+        return False
+
+    stale_qa = [
+        agent for agent in agents
+        if str(agent.get("id", "")).startswith("qa-")
+        and agent.get("id") != "qa-engineer"
+        and agent.get("status") in {"queued", "running"}
+    ]
+    if not stale_qa:
+        return False
+
+    verdict_by_task = {}
+    for entry in reversed((state.get("communication") or {}).get("log", [])):
+        if entry.get("type") != "message":
+            continue
+        payload = entry.get("payload") or {}
+        cause = payload.get("causeBy") or ""
+        if cause not in {"review_approved", "reject_with_feedback"}:
+            continue
+        metadata = payload.get("metadata") or {}
+        task_id = metadata.get("task_id") or payload.get("taskId")
+        if not task_id:
+            from_id = entry.get("from") or ""
+            if from_id.startswith("qa-"):
+                task_id = from_id[3:]
+        if task_id:
+            verdict_by_task[task_id] = cause
+
+    changed = False
+    for agent in stale_qa:
+        agent_id = agent.get("id")
+        task_id = agent_id[3:] if agent_id and agent_id.startswith("qa-") else ""
+        verdict = verdict_by_task.get(task_id)
+        if verdict == "review_approved":
+            _update_agent(
+                state,
+                agent_id,
+                status="done",
+                progress=100,
+                log=f"Task {task_id} approved (reconciled).",
+            )
+            changed = True
+        elif verdict == "reject_with_feedback":
+            _update_agent(
+                state,
+                agent_id,
+                status="failed",
+                progress=100,
+                log=f"Task {task_id} rejected (reconciled).",
+            )
+            changed = True
+    return changed
+
+
 def recompute_stats(board):
     tickets = board.get("tickets", [])
     stats = {
@@ -3251,9 +3311,12 @@ def api_board():
 
 @app.route("/api/run-state", methods=["GET"])
 def api_run_state():
-    state = load_run_state()
-    state["pausedTickets"] = list_ticket_snapshots()
-    return jsonify(state)
+    with run_lock:
+        state = load_run_state()
+        if _reconcile_stale_qa_agents(state):
+            save_run_state(state)
+        state["pausedTickets"] = list_ticket_snapshots()
+        return jsonify(state)
 
 
 @app.route("/api/tickets/<ticket_id>/play", methods=["POST"])
