@@ -81,8 +81,19 @@ paused_run_threads = {}
 
 
 def get_meta_dir():
-    """Return the scripts/meta-ralph directory relative to the project."""
-    return Path.cwd() / "scripts" / "meta-ralph"
+    """Return the scripts/meta-ralph directory relative to the project.
+
+    Prefer the current working directory when it already contains the
+    meta-ralph scripts folder (used by tests and project-specific runs).
+    Otherwise fall back to the directory where this server file lives, so
+    the dashboard still finds state/artifacts regardless of the cwd used to
+    start the process.
+    """
+    cwd_candidate = Path.cwd() / "scripts" / "meta-ralph"
+    if cwd_candidate.exists():
+        return cwd_candidate
+    server_dir = Path(__file__).resolve().parent
+    return server_dir / "scripts" / "meta-ralph"
 
 
 def get_board_path():
