@@ -1148,29 +1148,70 @@ function renderTicketStatus() {
 
 function renderMessaging() {
   if (!messagingFeed) return;
-  const messages = runState.messages || [];
-  if (!messages.length) {
+  const comm = runState.communication || {};
+  const log = comm.log || [];
+  const legacyMessages = (runState.messages || []).map(m => ({ ...m, _source: 'legacy' }));
+  const entries = [...log, ...legacyMessages].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+  if (!entries.length) {
     messagingFeed.innerHTML = '<div class="messaging-empty">No internal messages yet...</div>';
     return;
   }
 
   messagingFeed.innerHTML = '';
-  messages.slice().reverse().forEach(msg => {
+  entries.slice().reverse().forEach(entry => {
     const el = document.createElement('div');
     el.className = 'comm-item';
-    const answeredAt = msg.answeredAt ? formatTime(msg.answeredAt) : '';
-    const answerBlock = msg.answer
-      ? `<div class="comm-item-answer"><strong>${escapeHtml(stripEmojis(msg.to))}:</strong> ${escapeHtml(stripEmojis(msg.answer))}</div>`
-      : '<div class="comm-item-answer">Waiting for response...</div>';
-    el.innerHTML = `
-      <div class="comm-item-header">
-        <span>${escapeHtml(stripEmojis(msg.from))} → ${escapeHtml(stripEmojis(msg.to))}</span>
-        <span>${formatTime(msg.timestamp)}</span>
-      </div>
-      <div class="comm-item-body">${escapeHtml(stripEmojis(msg.question))}</div>
-      ${answerBlock}
-      ${answeredAt ? `<div class="comm-item-answer">Answered ${answeredAt}</div>` : ''}
-    `;
+
+    let headerText = '';
+    let bodyText = '';
+    let badge = '';
+
+    if (entry._source === 'legacy') {
+      headerText = `${entry.from || 'unknown'} → ${entry.to || 'all'}`;
+      bodyText = entry.question || '';
+      badge = entry.answer ? 'answered' : 'pending';
+      const answerHtml = entry.answer
+        ? `<div class="comm-item-answer"><strong>${escapeHtml(stripEmojis(entry.to))}:</strong> ${escapeHtml(stripEmojis(entry.answer))}</div>`
+        : '<div class="comm-item-answer">Waiting for response...</div>';
+      el.innerHTML = `
+        <div class="comm-item-header">
+          <span>${escapeHtml(stripEmojis(headerText))}</span>
+          <span>${formatTime(entry.timestamp)}</span>
+        </div>
+        <div class="comm-item-meta">${escapeHtml(badge)}</div>
+        <div class="comm-item-body">${escapeHtml(stripEmojis(bodyText))}</div>
+        ${answerHtml}
+      `;
+    } else if (entry.type === 'message') {
+      headerText = `${entry.from || 'unknown'} → ${entry.to || 'all'}`;
+      bodyText = entry.payload && entry.payload.text ? entry.payload.text : '';
+      badge = entry.messageType || 'message';
+      el.innerHTML = `
+        <div class="comm-item-header">
+          <span>${escapeHtml(stripEmojis(headerText))}</span>
+          <span>${formatTime(entry.timestamp)}</span>
+        </div>
+        <div class="comm-item-meta">${escapeHtml(badge)}</div>
+        <div class="comm-item-body">${escapeHtml(stripEmojis(bodyText))}</div>
+      `;
+    } else if (entry.type === 'event') {
+      headerText = entry.eventType || 'event';
+      const payload = entry.payload || {};
+      bodyText = typeof payload === 'object'
+        ? Object.entries(payload).map(([k, v]) => `${k}: ${JSON.stringify(v)}`).join(' · ')
+        : String(payload);
+      badge = entry.participantId || 'system';
+      el.innerHTML = `
+        <div class="comm-item-header">
+          <span>${escapeHtml(stripEmojis(headerText))}</span>
+          <span>${formatTime(entry.timestamp)}</span>
+        </div>
+        <div class="comm-item-meta">${escapeHtml(badge)}</div>
+        <div class="comm-item-body">${escapeHtml(stripEmojis(bodyText))}</div>
+      `;
+    }
+
     messagingFeed.appendChild(el);
   });
 
@@ -1219,6 +1260,54 @@ function updateChatAgentSelect() {
 
 let lastRenderedChatKey = null;
 
+function formatChatContent(text) {
+  if (!text) return '';
+  let html = escapeHtml(text);
+  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/`([^`]+)`/g, '<code class="chat-inline-code">$1</code>');
+  html = html.replace(/\n/g, '<br>');
+  return html;
+}
+
+function buildChatMessageHtml(entry) {
+  const from = entry.from || 'system';
+  const payload = entry.payload || {};
+  const reply = payload.reply || payload.text || '';
+  const meta = payload.meta || {};
+  const trace = Array.isArray(payload.trace) ? payload.trace : [];
+  const side = from === 'user' ? 'user' : (from === 'system' ? 'system' : 'agent');
+  const displayName = from === 'user' ? 'You' : (from === 'system' ? 'System' : stripEmojis(from));
+
+  const skills = Array.isArray(meta.skills) ? meta.skills : [];
+  const skillsHtml = skills.length
+    ? `<div class="chat-skills">${skills.map(s => `<span class="chat-skill-tag">${escapeHtml(s)}</span>`).join('')}</div>`
+    : '';
+
+  const traceHtml = trace.length
+    ? `<details class="chat-trace">
+        <summary>Agent trace (${trace.length})</summary>
+        <div class="chat-trace-body">${trace.map(line => `<p>${formatChatContent(line)}</p>`).join('')}</div>
+      </details>`
+    : '';
+
+  const sessionHint = meta.sessionHint
+    ? `<div class="chat-session-hint" title="Backend session">${escapeHtml(meta.sessionHint)}</div>`
+    : '';
+
+  return `
+    <div class="chat-message ${side}">
+      <div class="chat-bubble">${formatChatContent(reply)}</div>
+      ${skillsHtml}
+      ${traceHtml}
+      ${sessionHint}
+      <div class="chat-meta">
+        <span>${escapeHtml(displayName)}</span>
+        <span>${formatTime(entry.timestamp)}</span>
+      </div>
+    </div>
+  `;
+}
+
 function renderChat() {
   if (!chatMessages) return;
   const comm = runState.communication || {};
@@ -1233,24 +1322,7 @@ function renderChat() {
     return;
   }
 
-  chatMessages.innerHTML = '';
-  log.forEach(entry => {
-    const from = entry.from || 'system';
-    const text = (entry.payload && entry.payload.text) || '';
-    const side = from === 'user' ? 'user' : (from === 'system' ? 'system' : 'agent');
-    const displayName = from === 'user' ? 'You' : (from === 'system' ? 'System' : stripEmojis(from));
-
-    const el = document.createElement('div');
-    el.className = `chat-message ${side}`;
-    el.innerHTML = `
-      <div class="chat-bubble">${escapeHtml(text)}</div>
-      <div class="chat-meta">
-        <span>${escapeHtml(displayName)}</span>
-        <span>${formatTime(entry.timestamp)}</span>
-      </div>
-    `;
-    chatMessages.appendChild(el);
-  });
+  chatMessages.innerHTML = log.map(buildChatMessageHtml).join('');
 
   const nearBottom = chatMessages.scrollHeight - chatMessages.scrollTop - chatMessages.clientHeight < 80;
   if (nearBottom) chatMessages.scrollTop = chatMessages.scrollHeight;
@@ -1752,6 +1824,7 @@ socket.on('question_answered', (question) => {
 
 socket.on('communication_update', (communication) => {
   runState.communication = communication;
+  renderMessaging();
   renderChat();
   updateChatAgentSelect();
 });
@@ -1760,6 +1833,7 @@ socket.on('chat_message', (entry) => {
   if (entry && runState.communication) {
     runState.communication.log = runState.communication.log || [];
     runState.communication.log.push(entry);
+    renderMessaging();
     renderChat();
     updateChatAgentSelect();
   }
