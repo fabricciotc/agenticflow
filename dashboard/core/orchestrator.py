@@ -359,6 +359,7 @@ class Orchestrator(threading.Thread):
             run_ai=self._run_ai,
             max_rounds=10,
             log_callback=log_callback,
+            update_agent=self._update_agent,
         )
 
         if generated_prd and generated_prd.exists():

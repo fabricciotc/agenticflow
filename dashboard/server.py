@@ -1634,6 +1634,7 @@ Respond concisely and practically. Assume reasonable decisions for a .NET MVP wi
             ),
             max_rounds=10,
             log_callback=log_callback,
+            update_agent=self._update_agent,
         )
 
         if generated_prd and generated_prd.exists():

@@ -272,6 +272,7 @@ def run_pm_analysis(
     run_ai: Optional[Callable[..., Optional[str]]] = None,
     max_rounds: int = 10,
     log_callback: Optional[Callable[[str, str], None]] = None,
+    update_agent: Optional[Callable[[str, Any], None]] = None,
 ) -> Optional[Path]:
     """Execute PM Analysis using MetaGPT-style roles and return the PRD path.
 
@@ -280,6 +281,8 @@ def run_pm_analysis(
         run_ai: Function to invoke the configured AI runner. Defaults to run_ai_prompt.
         max_rounds: Maximum environment rounds to avoid infinite loops.
         log_callback: Optional callback(message, level) for logging.
+        update_agent: Optional callback(agent_id, **kwargs) to propagate subagent status
+            (e.g. running/done) to the dashboard.
 
     Returns:
         Path to the generated PRD, or None if generation failed.
@@ -317,12 +320,18 @@ def run_pm_analysis(
 
     subagents = DEFAULT_SUBAGENTS
 
-    def update_agent(agent_id: str, **kwargs):
+    def _notify_agent_update(agent_id: str, **kwargs):
         status = kwargs.get("status", "")
         progress = kwargs.get("progress", "")
         log = kwargs.get("log", "")
         if log_callback:
             log_callback(f"[{agent_id}] {status} {progress}% — {log}", "info")
+        if update_agent is not None:
+            try:
+                update_agent(agent_id, **kwargs)
+            except Exception as exc:
+                if log_callback:
+                    log_callback(f"Could not propagate status for {agent_id}: {exc}", "warning")
 
     def build_prompt(sub_id: str, focus: str, title: str, description: str, follow_up: Optional[str]) -> str:
         return build_pm_subagent_prompt(sub_id, focus, title, description, follow_up)
@@ -361,7 +370,7 @@ def run_pm_analysis(
             "ticket_id": ticket_id,
             "output_dir": pm_research_dir,
             "build_prompt": build_prompt,
-            "update_agent": update_agent,
+            "update_agent": _notify_agent_update,
             "phase_name": "pm_research",
             "timeout_seconds": 600,
         },

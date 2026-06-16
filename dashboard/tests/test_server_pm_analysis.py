@@ -60,6 +60,42 @@ class TestServerPMAnalysisIntegration(unittest.TestCase):
         self.assertTrue(any(c["agent_id"] == "pm-technical" for c in research_calls))
         self.assertTrue(any(c["agent_id"] == "pm-research-agents" for c in calls))
 
+    def test_run_pm_analysis_propagates_subagent_status_updates(self):
+        import os
+        os.chdir(self.tmpdir)
+        (Path(self.tmpdir) / "scripts" / "meta-ralph" / "state").mkdir(parents=True)
+
+        ticket = {
+            "id": "INT-003",
+            "title": "Status propagation",
+            "description": "Check subagent status updates",
+            "repoPath": str(self.tmpdir),
+        }
+
+        def mock_run_ai(prompt, phase_name, timeout_seconds, agent_id=None):
+            if agent_id == "pm-research-agents":
+                return "# PRD\n\nConsolidated PRD content."
+            return f"# {agent_id}\n\nResearch findings."
+
+        runner = server.AgentRunner(ticket)
+        with patch.object(runner, "_run_ai_prompt", side_effect=mock_run_ai):
+            with patch.object(runner, "_update_agent") as update_mock:
+                runner.run_pm_analysis()
+
+        subagent_ids = {sub_id for sub_id, _, _ in pm_analysis.DEFAULT_SUBAGENTS}
+        running_calls = [
+            call for call in update_mock.call_args_list
+            if call.args[0] in subagent_ids and call.kwargs.get("status") == "running"
+        ]
+        done_calls = [
+            call for call in update_mock.call_args_list
+            if call.args[0] in subagent_ids and call.kwargs.get("status") == "done"
+        ]
+        self.assertEqual(len(running_calls), len(subagent_ids),
+                         "Each PM research subagent should be marked running")
+        self.assertGreaterEqual(len(done_calls), len(subagent_ids),
+                                "Each PM research subagent should be marked done")
+
     def test_run_pm_analysis_reuses_existing_prd(self):
         import os
         os.chdir(self.tmpdir)
