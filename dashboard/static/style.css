@@ -1623,6 +1623,15 @@ body {
   color: var(--wrn);
 }
 
+.ticket-action-restart {
+  color: var(--err);
+}
+
+.ticket-action-restart:hover {
+  background: var(--danger-muted);
+  color: var(--err);
+}
+
 /* Adaline form */
 .adaline-form {
   padding: 1rem;

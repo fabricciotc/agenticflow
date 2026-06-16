@@ -2943,6 +2943,65 @@ def play_ticket(ticket_id):
     return False, "No se pudo iniciar el ticket"
 
 
+def restart_ticket(ticket_id):
+    """Restart a ticket from scratch: stop runner, delete artifacts and run-state, then re-run.
+
+    This deletes the run snapshot, generated artifacts (PRD, tasks, architecture,
+    design review) and the in-memory/disk run state for the ticket. It then moves
+    the ticket back to ready-for-work and starts the pipeline as if it were new.
+    Source code changes in the project repo are NOT reverted.
+    """
+    global _active_run_thread
+
+    board = load_board()
+    ticket = next((t for t in board.get("tickets", []) if t.get("id") == ticket_id), None)
+    if not ticket:
+        return False, "Ticket no encontrado"
+
+    # Stop active runner for this ticket.
+    if (
+        _active_run_thread
+        and _active_run_thread.is_alive()
+        and getattr(_active_run_thread, "ticket_id", None) == ticket_id
+    ):
+        _active_run_thread.stop()
+        _active_run_thread.join(timeout=3)
+        _active_run_thread = None
+
+    # Remove any paused thread for this ticket.
+    paused_run_threads.pop(ticket_id, None)
+
+    # Delete snapshot on disk.
+    delete_ticket_snapshot(ticket_id)
+
+    # Delete generated artifacts.
+    state_dir = get_meta_dir() / "state"
+    if state_dir.exists():
+        for pattern in [
+            f"prd-{ticket_id}.md",
+            f"tasks-{ticket_id}.json",
+            f"architecture-{ticket_id}.md",
+            f"design-review-{ticket_id}.*",
+        ]:
+            for path in state_dir.glob(pattern):
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+
+    # Reset global run-state to idle.
+    reset_run_state_to_idle()
+
+    # Move ticket back to ready-for-work.
+    update_ticket_status(ticket_id, "ready-for-work")
+
+    # Start from scratch.
+    ok, msg = play_ticket(ticket_id)
+    if ok:
+        return True, f"Ticket {ticket_id} reiniciado desde cero"
+    return False, f"No se pudo reiniciar el ticket: {msg}"
+
+
 def start_automatic_run(ticket, resume=False, queue_if_active=True):
     """Inicia el loop multi-agente para un ticket. Si resume=True, reanuda desde run-state existente."""
     global _active_run_thread
@@ -3128,6 +3187,12 @@ def api_run_state():
 @app.route("/api/tickets/<ticket_id>/play", methods=["POST"])
 def api_play_ticket(ticket_id):
     ok, msg = play_ticket(ticket_id)
+    return jsonify({"ok": ok, "message": msg}), (200 if ok else 400)
+
+
+@app.route("/api/tickets/<ticket_id>/restart", methods=["POST"])
+def api_restart_ticket(ticket_id):
+    ok, msg = restart_ticket(ticket_id)
     return jsonify({"ok": ok, "message": msg}), (200 if ok else 400)
 
 

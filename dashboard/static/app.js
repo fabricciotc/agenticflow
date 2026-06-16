@@ -780,11 +780,15 @@ function renderTicketsList() {
     const runStatus = getTicketRunStatus(ticket.id);
     const runIcon = runStatusIcon(runStatus);
     const isRunnable = ['idle', 'queued', 'paused'].includes(runStatus) && ['backlog', 'ready-for-work', 'in-design', 'in-progress', 'in-review'].includes(ticket.status);
+    const showRestart = ['ready-for-work', 'in-design', 'in-progress', 'in-review', 'done'].includes(ticket.status);
     const runAction = runStatus === 'running'
       ? `<button type="button" class="btn-icon btn-small ticket-action-pause" data-id="${escapeHtml(ticket.id)}" title="Pausar"><i data-lucide="pause"></i></button>`
       : isRunnable
         ? `<button type="button" class="btn-icon btn-small ticket-action-play" data-id="${escapeHtml(ticket.id)}" title="${runStatus === 'paused' ? 'Reanudar' : 'Ejecutar'}"><i data-lucide="play"></i></button>`
         : '';
+    const restartAction = showRestart
+      ? `<button type="button" class="btn-icon btn-small ticket-action-restart" data-id="${escapeHtml(ticket.id)}" title="Reiniciar desde cero"><i data-lucide="refresh-cw"></i></button>`
+      : '';
 
     const row = document.createElement('div');
     row.className = 'ticket-row ticket-row-' + runStatus;
@@ -795,6 +799,7 @@ function renderTicketsList() {
       <span class="ticket-row-status status-${ticket.status}">${COLUMN_LABELS[ticket.status] || ticket.status}</span>
       <div class="ticket-row-actions">
         ${runAction}
+        ${restartAction}
         <button type="button" class="btn-icon btn-small" title="Editar"><i data-lucide="pencil"></i></button>
         <button type="button" class="btn-icon btn-small" title="Eliminar"><i data-lucide="trash-2"></i></button>
       </div>
@@ -811,6 +816,8 @@ function renderTicketsList() {
     if (playBtn) playBtn.addEventListener('click', (e) => { e.stopPropagation(); playTicket(ticket.id); });
     const pauseBtn = row.querySelector('.ticket-action-pause');
     if (pauseBtn) pauseBtn.addEventListener('click', (e) => { e.stopPropagation(); pauseTicket(ticket.id); });
+    const restartBtn = row.querySelector('.ticket-action-restart');
+    if (restartBtn) restartBtn.addEventListener('click', (e) => { e.stopPropagation(); restartTicket(ticket.id); });
     ticketsList.appendChild(row);
   });
   if (window.lucide) lucide.createIcons();
@@ -853,6 +860,24 @@ async function pauseTicket(ticketId) {
     showToast(data.message);
   } catch (err) {
     showToast(err.message, 4000);
+  }
+}
+
+async function restartTicket(ticketId) {
+  const confirmed = await showConfirmModal({
+    title: 'Reiniciar ticket',
+    message: `¿Reiniciar el ticket ${ticketId} desde cero?\n\nSe borrarán el progreso del run, snapshots y los artefactos generados (PRD, plan de tareas, arquitectura). Los cambios de código en el repositorio no se eliminarán.`,
+    okText: 'Reiniciar',
+    cancelText: 'Cancelar',
+  });
+  if (!confirmed) return;
+  try {
+    const res = await fetch(`/api/tickets/${ticketId}/restart`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || 'Error');
+    showToast(data.message || 'Ticket reiniciado');
+  } catch (err) {
+    showToast('Error reiniciando ticket: ' + err.message, 4000);
   }
 }
 
