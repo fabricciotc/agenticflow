@@ -33,8 +33,7 @@ const socket = io({
 
 let boardData = { columns: [], tickets: [], stats: {} };
 let runState = { active: false, ticketId: null, status: 'idle', currentAgent: null, progress: 0, logs: [], queue: [], agents: [], pendingQuestions: [], messages: [] };
-let systemInfo = { model: '—', preferredBackend: null, availableBackends: [], projectsRoot: null };
-let projectsRoot = null;
+let systemInfo = { model: '—', preferredBackend: null, availableBackends: [] };
 let traces = [];
 let graphData = { nodes: [], edges: [] };
 let selectedTicketId = localStorage.getItem('meta-ralph-selected-ticket') || null;
@@ -52,7 +51,6 @@ let selectedAgentId = null;
 let confirmModalResolve = null;
 let aiLinkModalOpen = false;
 let installPromptEvent = null;
-let repoFolderHandle = null;
 let engineReady = false;
 
 let lastRenderedTracesKey = null;
@@ -112,9 +110,6 @@ const btnCancel = document.getElementById('btn-cancel');
 const btnDelete = document.getElementById('btn-delete');
 const repoPathInput = document.getElementById('ticket-repo-path');
 const repoPickerMessage = document.getElementById('repo-picker-message');
-const projectsRootInput = document.getElementById('projects-root');
-const btnSaveProjectsRoot = document.getElementById('btn-save-projects-root');
-const projectsRootMessage = document.getElementById('projects-root-message');
 const pwaInstallOverlay = document.getElementById('pwa-install-overlay');
 const btnInstallPwaOverlay = document.getElementById('btn-install-pwa');
 const btnContinueBrowser = document.getElementById('btn-continue-browser');
@@ -1042,13 +1037,9 @@ function openTicketModal(ticket = null) {
   document.getElementById('ticket-title').value = ticket ? ticket.title : '';
   document.getElementById('ticket-description').value = ticket ? ticket.description || '' : '';
   document.getElementById('ticket-status').value = ticket ? ticket.status : 'backlog';
-  document.getElementById('ticket-role').value = ticket ? ticket.assigneeRole || '' : '';
-  document.getElementById('ticket-focus').value = ticket ? ticket.featureFocus || '' : '';
   document.getElementById('ticket-labels').value = ticket ? (ticket.labels || []).join(', ') : '';
   repoPathInput.value = ticket ? ticket.repoPath || '' : '';
-  if (projectsRootInput) projectsRootInput.value = projectsRoot || '';
-  if (projectsRootMessage) projectsRootMessage.style.display = 'none';
-  updateRepoFolderBadge(repoFolderHandle ? repoFolderHandle.name : null);
+  updateRepoFolderBadge(null);
   if (btnDelete) btnDelete.style.display = isEdit ? 'inline-block' : 'none';
   if (ticketModal) ticketModal.classList.add('open');
   closeTicketsModal();
@@ -1083,8 +1074,6 @@ async function saveTicket(e) {
     description: document.getElementById('ticket-description').value,
     status: document.getElementById('ticket-status').value,
     repoPath,
-    assigneeRole: document.getElementById('ticket-role').value,
-    featureFocus: document.getElementById('ticket-focus').value,
     labels: document.getElementById('ticket-labels').value.split(',').map(s => s.trim()).filter(Boolean)
   };
 
@@ -1140,37 +1129,6 @@ function hideRepoMessage() {
   if (!repoPickerMessage) return;
   repoPickerMessage.style.display = 'none';
   repoPickerMessage.textContent = '';
-}
-
-function showProjectsRootMessage(text, isError = false) {
-  if (!projectsRootMessage) return;
-  projectsRootMessage.textContent = text;
-  projectsRootMessage.style.display = 'block';
-  projectsRootMessage.style.color = isError ? 'var(--danger)' : 'var(--success)';
-}
-
-function hideProjectsRootMessage() {
-  if (!projectsRootMessage) return;
-  projectsRootMessage.style.display = 'none';
-}
-
-async function saveProjectsRoot() {
-  if (!projectsRootInput) return;
-  const value = projectsRootInput.value.trim() || null;
-  try {
-    const res = await fetch('/api/config', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectsRoot: value })
-    });
-    const data = await res.json();
-    if (!res.ok || !data.ok) throw new Error(data.error || 'Error saving settings');
-    projectsRoot = data.projectsRoot || null;
-    systemInfo.projectsRoot = projectsRoot;
-    showProjectsRootMessage('Default projects folder saved');
-  } catch (err) {
-    showProjectsRootMessage(err.message, true);
-  }
 }
 
 /* ============================================================
@@ -2041,52 +1999,6 @@ async function checkBackend() {
   }
 }
 
-/* ============================================================
-   File System Access API helpers
-   ============================================================ */
-
-const FS_HANDLE_DB = 'agenticflow-fs';
-const FS_HANDLE_STORE = 'repo-handles';
-
-async function openFsHandleDb() {
-  if (!('indexedDB' in window)) return null;
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(FS_HANDLE_DB, 1);
-    request.onupgradeneeded = (event) => {
-      const db = event.target.result;
-      if (!db.objectStoreNames.contains(FS_HANDLE_STORE)) {
-        db.createObjectStore(FS_HANDLE_STORE);
-      }
-    };
-    request.onsuccess = (event) => resolve(event.target.result);
-    request.onerror = () => reject(request.error);
-  });
-}
-
-async function saveRepoHandle(handle) {
-  const db = await openFsHandleDb();
-  if (!db) return false;
-  return new Promise((resolve) => {
-    const tx = db.transaction(FS_HANDLE_STORE, 'readwrite');
-    const store = tx.objectStore(FS_HANDLE_STORE);
-    const request = store.put(handle, 'repo');
-    request.onsuccess = () => resolve(true);
-    request.onerror = () => resolve(false);
-  });
-}
-
-async function loadRepoHandle() {
-  const db = await openFsHandleDb();
-  if (!db) return null;
-  return new Promise((resolve) => {
-    const tx = db.transaction(FS_HANDLE_STORE, 'readonly');
-    const store = tx.objectStore(FS_HANDLE_STORE);
-    const request = store.get('repo');
-    request.onsuccess = () => resolve(request.result || null);
-    request.onerror = () => resolve(null);
-  });
-}
-
 function updateRepoFolderBadge(name) {
   const badge = document.getElementById('repo-folder-badge');
   const nameEl = document.getElementById('repo-folder-name');
@@ -2100,66 +2012,23 @@ function updateRepoFolderBadge(name) {
 }
 
 async function pickRepoFolder() {
-  if (!('showDirectoryPicker' in window)) {
-    showToast('Folder picker is only available in Chrome/Edge');
-    return;
-  }
-  try {
-    const handle = await window.showDirectoryPicker();
-    repoFolderHandle = handle;
-    updateRepoFolderBadge(handle.name);
-    await saveRepoHandle(handle);
-
-    // Verify that it looks like a Git repo by trying to access .git
-    let isGitRepo = false;
-    try {
-      await handle.getDirectoryHandle('.git');
-      isGitRepo = true;
-    } catch {
-      isGitRepo = false;
-    }
-
-    // The File System Access API does not expose absolute paths. If the user
-    // configured a default projects root, auto-fill {root}/{folder-name}; otherwise
-    // ask them to paste the absolute path manually.
-    if (repoPathInput) {
-      if (projectsRoot) {
-        const separator = projectsRoot.endsWith('/') ? '' : '/';
-        repoPathInput.value = `${projectsRoot}${separator}${handle.name}`;
-      } else {
-        repoPathInput.value = '';
-        repoPathInput.placeholder = `Paste absolute path to "${handle.name}"`;
-        repoPathInput.focus();
-      }
-    }
-
-    const message = document.getElementById('repo-picker-message');
-    if (message) {
-      message.textContent = isGitRepo
-        ? `Folder "${handle.name}" selected. Paste its absolute path above, then save the ticket.`
-        : `Folder "${handle.name}" selected (no .git folder found). Paste its absolute path above, then save the ticket.`;
-      message.style.display = 'block';
-    }
-
-    showToast(isGitRepo ? `Linked folder: ${handle.name}` : `Folder selected (not a git repo): ${handle.name}`);
-  } catch (err) {
-    if (err.name !== 'AbortError') {
-      console.error('Error picking folder:', err);
-      showToast('Could not access folder: ' + err.message, 4000);
-    }
-  }
-}
-
-async function pickRepoFolderNative() {
+  showRepoMessage('Opening system folder picker...');
   try {
     const res = await fetch('/api/pick-folder', { method: 'POST' });
+    let data = {};
+    try {
+      data = await res.json();
+    } catch {
+      // ignore parse errors
+    }
     if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      showRepoMessage(data.error || 'Could not open system folder picker');
+      showRepoMessage(data.error || `Could not open system folder picker (HTTP ${res.status})`);
       return;
     }
-    const data = await res.json();
-    if (data.canceled) return;
+    if (data.canceled) {
+      hideRepoMessage();
+      return;
+    }
     if (!data.ok || !data.path) {
       showRepoMessage(data.error || 'No folder selected');
       return;
@@ -2174,26 +2043,11 @@ async function pickRepoFolderNative() {
   }
 }
 
-async function restoreRepoFolderHandle() {
-  const handle = await loadRepoHandle();
-  if (!handle) return;
-  try {
-    // Re-request permission if needed.
-    const permission = await handle.requestPermission({ mode: 'read' });
-    if (permission !== 'granted') return;
-    repoFolderHandle = handle;
-    updateRepoFolderBadge(handle.name);
-  } catch (err) {
-    console.warn('Could not restore repo folder handle:', err);
-  }
-}
-
 async function loadSystemInfo() {
   try {
     const res = await fetch('/api/system-info');
     if (!res.ok) return;
     systemInfo = await res.json();
-    projectsRoot = systemInfo.projectsRoot || null;
     renderHeader();
     if (aiLinkModalOpen) renderAiLinkModal();
   } catch (err) {
@@ -2318,12 +2172,7 @@ if (ticketForm) ticketForm.addEventListener('submit', saveTicket);
 if (repoPathInput) repoPathInput.addEventListener('input', hideRepoMessage);
 
 const btnPickFolder = document.getElementById('btn-pick-folder');
-const btnPickFolderNative = document.getElementById('btn-pick-folder-native');
 if (btnPickFolder) btnPickFolder.addEventListener('click', pickRepoFolder);
-if (btnPickFolderNative) btnPickFolderNative.addEventListener('click', pickRepoFolderNative);
-
-if (btnSaveProjectsRoot) btnSaveProjectsRoot.addEventListener('click', saveProjectsRoot);
-if (projectsRootInput) projectsRootInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveProjectsRoot(); });
 
 if (btnInstallPwaOverlay) btnInstallPwaOverlay.addEventListener('click', installPwaFromOverlay);
 if (btnContinueBrowser) btnContinueBrowser.addEventListener('click', () => {

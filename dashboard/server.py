@@ -11,6 +11,7 @@ import concurrent.futures
 import faulthandler
 import json
 import os
+import platform
 import re
 import shutil
 import signal
@@ -3497,27 +3498,31 @@ def api_patch_config():
     return jsonify({"ok": True, "projectsRoot": get_projects_root(), "preferredBackend": load_config().get("preferredBackend")})
 
 
-def _pick_folder_native() -> tuple[str | None, bool]:
+def _pick_folder_native() -> tuple[str | None, bool, str]:
     """Open a native folder picker and return the absolute path.
 
-    Returns (path, canceled).  This only works when the engine runs on the
-    user's local machine with a graphical session.
+    Returns (path, canceled, error_message).  This only works when the engine
+    runs on the user's local machine with a graphical session.
     """
     system = platform.system()
+    errors = []
     try:
         if system == "Darwin":
-            script = 'POSIX path of (choose folder with prompt "Select a project folder for AgenticFlow")'
-            result = subprocess.run(
-                ["osascript", "-e", script],
-                capture_output=True,
-                text=True,
-                timeout=60,
-                check=False,
-            )
-            if result.returncode != 0:
-                return None, True
-            path = result.stdout.strip().rstrip("/")
-            return path, not path
+            try:
+                import tkinter as tk
+                from tkinter import filedialog
+                root = tk.Tk()
+                root.withdraw()
+                root.lift()
+                root.attributes("-topmost", True)
+                path = filedialog.askdirectory(title="Select a project folder for AgenticFlow")
+                root.destroy()
+                if path:
+                    return str(path), False, ""
+                return None, True, ""
+            except Exception as exc:
+                return None, True, f"Native picker failed: {exc}"
+
         if system == "Windows":
             ps = (
                 'Add-Type -AssemblyName System.Windows.Forms; '
@@ -3533,7 +3538,10 @@ def _pick_folder_native() -> tuple[str | None, bool]:
                 check=False,
             )
             path = result.stdout.strip()
-            return path, not path
+            if path:
+                return path, False, ""
+            return None, True, (result.stderr or "No folder selected").strip()
+
         # Linux / other: try zenity, then kdialog
         for cmd in [
             ["zenity", "--file-selection", "--directory", "--title=Select a project folder for AgenticFlow"],
@@ -3549,19 +3557,22 @@ def _pick_folder_native() -> tuple[str | None, bool]:
                 )
                 path = result.stdout.strip()
                 if result.returncode == 0 and path:
-                    return path, False
-        return None, True
+                    return path, False, ""
+                errors.append((result.stderr or f"{cmd[0]} returned no path").strip())
+            else:
+                errors.append(f"{cmd[0]} not found")
+        return None, True, "; ".join(errors) or "No native folder picker available"
     except Exception as exc:
         print(f"Native folder picker error: {exc}")
-        return None, True
+        return None, True, str(exc)
 
 
 @app.route("/api/pick-folder", methods=["POST"])
 def api_pick_folder():
     """Open a native folder picker and return the selected absolute path."""
-    path, canceled = _pick_folder_native()
+    path, canceled, error_message = _pick_folder_native()
     if canceled or not path:
-        return jsonify({"canceled": True})
+        return jsonify({"ok": False, "canceled": True, "error": error_message or "No folder selected"}), 400
     try:
         resolved = Path(path).expanduser().resolve()
         resolved.relative_to(DASHBOARD_DIR)

@@ -271,25 +271,15 @@
           <div class="form-group">
             <label for="ticket-repo-path">Repo folder</label>
             <div class="repo-input-row">
-              <input type="text" id="ticket-repo-path" placeholder="Select a folder, then confirm its absolute path">
-              <button type="button" class="btn-secondary btn-small" id="btn-pick-folder" title="Pick folder">Pick folder</button>
-              <button type="button" class="btn-secondary btn-small" id="btn-pick-folder-native" title="Pick folder using the system dialog">System dialog</button>
+              <input type="text" id="ticket-repo-path" placeholder="Select a folder using the system dialog">
+              <button type="button" class="btn-secondary btn-small" id="btn-pick-folder" title="Pick folder using the system dialog">Pick folder</button>
             </div>
             <div class="repo-folder-badge" id="repo-folder-badge" style="display:none;">
               <i data-lucide="folder-check"></i>
               <span id="repo-folder-name">—</span>
             </div>
-            <span class="field-hint">Pick the project folder. <strong>System dialog</strong> uses your native Finder/Explorer and fills the absolute path automatically. <strong>Pick folder</strong> uses the browser picker and requires Chrome/Edge.</span>
+            <span class="field-hint">Click <strong>Pick folder</strong> to open your native Finder/Explorer and fill the absolute path automatically.</span>
             <span id="repo-picker-message" class="field-message" style="display:none"></span>
-          </div>
-          <div class="form-group" style="margin-top:0.75rem;">
-            <label for="projects-root">Default projects folder</label>
-            <div class="repo-input-row">
-              <input type="text" id="projects-root" placeholder="/Users/you/projects">
-              <button type="button" class="btn-secondary btn-small" id="btn-save-projects-root">Save</button>
-            </div>
-            <span class="field-hint">When set, Pick folder will auto-fill the path as {folder}/{selected-name}.</span>
-            <span id="projects-root-message" class="field-message" style="display:none"></span>
           </div>
         </div>
 
@@ -306,16 +296,6 @@
                 <option value="in-review">In Review</option>
                 <option value="done">Done</option>
               </select>
-            </div>
-            <div class="form-group">
-              <label for="ticket-role">Assigned role</label>
-              <input type="text" id="ticket-role" placeholder="Example: backend-api-engineer">
-            </div>
-          </div>
-          <div class="form-row">
-            <div class="form-group">
-              <label for="ticket-focus">Feature Focus</label>
-              <input type="text" id="ticket-focus" placeholder="Example: Define and persist the user data model">
             </div>
             <div class="form-group">
               <label for="ticket-labels">Labels</label>
