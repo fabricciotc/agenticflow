@@ -3497,6 +3497,80 @@ def api_patch_config():
     return jsonify({"ok": True, "projectsRoot": get_projects_root(), "preferredBackend": load_config().get("preferredBackend")})
 
 
+def _pick_folder_native() -> tuple[str | None, bool]:
+    """Open a native folder picker and return the absolute path.
+
+    Returns (path, canceled).  This only works when the engine runs on the
+    user's local machine with a graphical session.
+    """
+    system = platform.system()
+    try:
+        if system == "Darwin":
+            script = 'POSIX path of (choose folder with prompt "Select a project folder for AgenticFlow")'
+            result = subprocess.run(
+                ["osascript", "-e", script],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+            )
+            if result.returncode != 0:
+                return None, True
+            path = result.stdout.strip().rstrip("/")
+            return path, not path
+        if system == "Windows":
+            ps = (
+                'Add-Type -AssemblyName System.Windows.Forms; '
+                '$d = New-Object System.Windows.Forms.FolderBrowserDialog; '
+                '$d.Description = "Select a project folder for AgenticFlow"; '
+                'if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $d.SelectedPath }'
+            )
+            result = subprocess.run(
+                ["powershell", "-Command", ps],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+            )
+            path = result.stdout.strip()
+            return path, not path
+        # Linux / other: try zenity, then kdialog
+        for cmd in [
+            ["zenity", "--file-selection", "--directory", "--title=Select a project folder for AgenticFlow"],
+            ["kdialog", "--getexistingdirectory", "."],
+        ]:
+            if shutil.which(cmd[0]):
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                    check=False,
+                )
+                path = result.stdout.strip()
+                if result.returncode == 0 and path:
+                    return path, False
+        return None, True
+    except Exception as exc:
+        print(f"Native folder picker error: {exc}")
+        return None, True
+
+
+@app.route("/api/pick-folder", methods=["POST"])
+def api_pick_folder():
+    """Open a native folder picker and return the selected absolute path."""
+    path, canceled = _pick_folder_native()
+    if canceled or not path:
+        return jsonify({"canceled": True})
+    try:
+        resolved = Path(path).expanduser().resolve()
+        resolved.relative_to(DASHBOARD_DIR)
+        return jsonify({"ok": False, "error": "The selected folder is inside the AgenticFlow engine directory."}), 400
+    except ValueError:
+        pass
+    return jsonify({"ok": True, "path": str(Path(path).expanduser().resolve()), "canceled": False})
+
+
 def _estimate_tokens(text):
     if not text:
         return 0

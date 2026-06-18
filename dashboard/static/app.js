@@ -2150,6 +2150,30 @@ async function pickRepoFolder() {
   }
 }
 
+async function pickRepoFolderNative() {
+  try {
+    const res = await fetch('/api/pick-folder', { method: 'POST' });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      showRepoMessage(data.error || 'Could not open system folder picker');
+      return;
+    }
+    const data = await res.json();
+    if (data.canceled) return;
+    if (!data.ok || !data.path) {
+      showRepoMessage(data.error || 'No folder selected');
+      return;
+    }
+    if (repoPathInput) repoPathInput.value = data.path;
+    updateRepoFolderBadge(data.path.split('/').pop() || data.path);
+    showRepoMessage(`Selected: ${data.path}`);
+    showToast(`Selected folder: ${data.path}`);
+  } catch (err) {
+    console.error('Error opening native folder picker:', err);
+    showRepoMessage('Could not open system folder picker. Make sure the local engine is running.');
+  }
+}
+
 async function restoreRepoFolderHandle() {
   const handle = await loadRepoHandle();
   if (!handle) return;
@@ -2294,7 +2318,9 @@ if (ticketForm) ticketForm.addEventListener('submit', saveTicket);
 if (repoPathInput) repoPathInput.addEventListener('input', hideRepoMessage);
 
 const btnPickFolder = document.getElementById('btn-pick-folder');
+const btnPickFolderNative = document.getElementById('btn-pick-folder-native');
 if (btnPickFolder) btnPickFolder.addEventListener('click', pickRepoFolder);
+if (btnPickFolderNative) btnPickFolderNative.addEventListener('click', pickRepoFolderNative);
 
 if (btnSaveProjectsRoot) btnSaveProjectsRoot.addEventListener('click', saveProjectsRoot);
 if (projectsRootInput) projectsRootInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveProjectsRoot(); });
