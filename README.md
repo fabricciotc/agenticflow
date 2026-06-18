@@ -25,7 +25,17 @@ AgenticFlow is a MetaGPT-style multi-agent orchestration skill for AI coding ass
 
 ## Installation
 
-### Option 1: Use The Installer
+### Option 1: Download the Desktop App (Recommended)
+
+Pre-built desktop apps are attached to every [GitHub Release](https://github.com/fabricciotc/agenticflow/releases). Download the bundle for your platform and open it:
+
+- **macOS**: `AgenticFlow_aarch64.app.zip` or `AgenticFlow_x86_64.app.zip`. Right-click the app and choose **Open** the first time.
+- **Windows**: the `.exe` installer from the `windows-x86_64` artifact.
+- **Linux**: `.deb` or `.AppImage` from the `linux-x86_64` artifact.
+
+The desktop app bundles the Python engine as a sidecar, so no Python or browser setup is required.
+
+### Option 2: Use The Installer
 
 ```bash
 git clone https://github.com/fabricciotc/meta-ralph.git
@@ -50,7 +60,7 @@ The installer:
 
 Restart your terminal or run `source ~/.zshrc` / `source ~/.bashrc` so the commands are available.
 
-### Option 2: Clone As An Assistant Skill
+### Option 3: Clone As An Assistant Skill
 
 You can still install AgenticFlow as a skill for Kimi, Claude, Cursor, or Codex:
 
@@ -142,6 +152,42 @@ Assistants that support skills should load `SKILL.md` when the user asks for:
 
 If the assistant does not support native skill discovery, use CLI mode.
 
+## Desktop Development
+
+The desktop app is a [Tauri v2](https://v2.tauri.app/) wrapper around the existing Python dashboard. It spawns the Python engine as a sidecar and loads `http://127.0.0.1:5050` in a native window.
+
+### Build locally
+
+1. Install the tooling:
+   - [Rust](https://rustup.rs/)
+   - [Node.js](https://nodejs.org/) 22+
+   - [uv](https://docs.astral.sh/uv/) (recommended; avoids Anaconda/PyInstaller runtime issues)
+
+2. Build the Python sidecar:
+
+   ```bash
+   scripts/build-sidecar.sh      # macOS / Linux
+   scripts/build-sidecar.ps1     # Windows
+   ```
+
+3. Build and package the desktop app:
+
+   ```bash
+   npm install
+   npx tauri build
+   ```
+
+   The bundle is written to `src-tauri/target/release/bundle/`.
+
+### Automatic releases
+
+Pushing a tag that starts with `v` triggers `.github/workflows/release.yml`, which builds and uploads desktop bundles for macOS (ARM + x86_64), Windows, and Linux to a GitHub Release.
+
+```bash
+git tag v0.6.0
+git push origin v0.6.0
+```
+
 ## Project Layout
 
 ```text
@@ -149,18 +195,21 @@ meta-ralph/
 ├── SKILL.md                    # Assistant-facing skill definition
 ├── README.md                   # This file
 ├── install.sh                  # Skill and CLI installer
-├── assets/
-│   └── prd-template.json       # Input PRD template
-├── references/
-│   ├── metagpt-roles.md        # Role SOPs
-│   ├── orchestrator-prompt.md
-│   ├── worker-prompt-template.md
-│   └── qa-prompt-template.md
+├── .github/workflows/          # CI/CD
+│   └── release.yml             # Tauri release workflow
+├── frontend/                   # Minimal Tauri frontend placeholder
+│   └── index.html
 ├── scripts/
 │   ├── meta-ralph.sh           # Main CLI
+│   ├── build-sidecar.sh        # PyInstaller sidecar builder
+│   ├── build-sidecar.ps1
 │   ├── create-worktree.sh
 │   ├── dispatch-workers.sh
 │   └── ...
+├── src-tauri/                  # Tauri v2 desktop app
+│   ├── src/main.rs             # Sidecar spawn / cleanup
+│   ├── tauri.conf.json
+│   └── icons/
 └── dashboard/
     ├── server.py               # Flask + SocketIO backend
     ├── static/                 # Kanban UI
