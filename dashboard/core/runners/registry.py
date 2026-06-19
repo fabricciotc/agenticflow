@@ -29,9 +29,29 @@ _BACKEND_DISPLAY_NAMES: Dict[str, str] = {
     "openai_api": "OpenAI API",
 }
 
+# Extra directories where popular agent CLIs are installed, used when the
+# launched process inherits a minimal PATH (e.g. an .app bundle on macOS).
+_EXTRA_SEARCH_DIRS: List[str] = [
+    os.path.expanduser("~/.kimi-code/bin"),
+    os.path.expanduser("~/.cursor/bin"),
+    os.path.expanduser("~/.claude/bin"),
+    os.path.expanduser("~/.codex/bin"),
+    os.path.expanduser("~/.local/bin"),
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "/usr/local/opt/node/bin",
+]
+
 
 def _find_executable(name: str) -> Optional[str]:
-    return shutil.which(name)
+    found = shutil.which(name)
+    if found:
+        return found
+    for directory in _EXTRA_SEARCH_DIRS:
+        candidate = os.path.join(directory, name)
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
 
 
 def discover_backends() -> List[Dict[str, Any]]:

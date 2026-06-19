@@ -41,6 +41,41 @@ from core.paths import (
 )
 from core.runners.registry import BackendRegistry, discover_backends
 
+
+def _ensure_user_path() -> None:
+    """Ensure the sidecar inherits the user's shell PATH.
+
+    Apps launched from Finder on macOS do not read .zshrc/.bashrc, so the
+    sidecar may miss CLIs installed by Homebrew, Kimi Code, etc.
+    """
+    if os.name != "posix" or os.environ.get("AGENTICFLOW_PATH_LOADED"):
+        return
+    shell = os.environ.get("SHELL", "/bin/zsh")
+    rc_candidates = ["~/.zshrc", "~/.zprofile"] if "zsh" in shell else ["~/.bashrc", "~/.bash_profile"]
+    for rc in rc_candidates:
+        rc_path = os.path.expanduser(rc)
+        if os.path.exists(rc_path):
+            try:
+                result = subprocess.run(
+                    [shell, "-c", f'source "{rc_path}" >/dev/null 2>&1; printf "%s" "$PATH"'],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                )
+                if result.returncode == 0:
+                    shell_path = result.stdout.strip()
+                    if shell_path:
+                        current = os.environ.get("PATH", "")
+                        os.environ["PATH"] = shell_path + (os.pathsep + current if current else "")
+                        os.environ["AGENTICFLOW_PATH_LOADED"] = "1"
+                        return
+            except Exception:
+                continue
+
+
+_ensure_user_path()
+
 # Allow dumping stack traces for all threads with SIGUSR1 during debugging.
 faulthandler.enable()
 try:
