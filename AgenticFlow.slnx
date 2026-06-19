@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="src/AgenticFlow.Domain/AgenticFlow.Domain.csproj" />
+  <Project Path="src/AgenticFlow.Application/AgenticFlow.Application.csproj" />
+  <Project Path="src/AgenticFlow.Persistence/AgenticFlow.Persistence.csproj" />
+  <Project Path="src/AgenticFlow.Bff/AgenticFlow.Bff.csproj" />
+</Solution>

@@ -29,10 +29,15 @@ scripts/meta-ralph/config.json
 # Generated project artifacts from factory runs
 GestionProductos/
 GestionProductos.Tests/
-/src/
 
 # Backups
 dashboard-backup-*/
+
+# .NET
+bin/
+obj/
+*.user
+*.suo
 
 # OS
 .DS_Store
