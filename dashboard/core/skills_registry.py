@@ -34,3 +34,7 @@ class SkillsRegistry:
         elif prefix:
             lines.append(prefix.strip())
         return "\n".join(lines)
+
+    def has_role(self, role: str) -> bool:
+        """Return True if the registry knows this role ID."""
+        return role in self._data
