@@ -17,9 +17,6 @@ jobs:
           - platform: macos-latest
             target: aarch64-apple-darwin
             arch: aarch64
-          - platform: macos-13
-            target: x86_64-apple-darwin
-            arch: x86_64
           - platform: windows-latest
             target: x86_64-pc-windows-msvc
             arch: x86_64
@@ -142,7 +139,7 @@ jobs:
           mkdir -p release-assets
 
           # macOS .app bundles -> zip
-          for arch in aarch64 x86_64; do
+          for arch in aarch64; do
             app_dir="artifacts/AgenticFlow-${arch}.app"
             if [ -d "$app_dir/AgenticFlow.app" ]; then
               (cd "$app_dir" && zip -ry ../../release-assets/AgenticFlow_${arch}.app.zip AgenticFlow.app)
@@ -169,6 +166,10 @@ jobs:
 
           ls -la release-assets
 
+      - name: Compute short SHA
+        id: sha
+        run: echo "short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Update latest tag
         run: |
           git config user.name "github-actions[bot]"
@@ -186,9 +187,13 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
-          name: Latest Build
+          name: Latest Build (${{ steps.sha.outputs.short }})
           body: |
             This release is automatically updated on every push to `master`.
+
+            - Commit: `${{ steps.sha.outputs.short }}`
+            - Branch: `master`
+            - Generated: ${{ github.event.head_commit.timestamp }}
 
             It contains the latest desktop bundles built from the tip of `master`.
             For stable releases, see the version-tagged releases.
