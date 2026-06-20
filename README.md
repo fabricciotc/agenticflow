@@ -27,10 +27,7 @@ AgenticFlow is a MetaGPT-style multi-agent orchestration app for autonomous soft
   - `copilot` or `gh` (GitHub Copilot CLI)
   - `OPENAI_API_KEY` for OpenAI-compatible API mode
 
-
-## Installation
-
-### Option 1: Download the Desktop App (Recommended)
+## Quick Start: Download the Desktop App
 
 Pre-built desktop apps are attached to every [GitHub Release](https://github.com/fabricciotc/agenticflow/releases). Download the bundle for your platform and open it:
 
@@ -40,7 +37,9 @@ Pre-built desktop apps are attached to every [GitHub Release](https://github.com
 
 The desktop app bundles the Python engine as a sidecar, so no Python or web setup is required.
 
-### Option 2: Use The Installer
+## Install from Source
+
+If you prefer to install the CLI and run the native app from a local clone:
 
 ```bash
 git clone https://github.com/fabricciotc/agenticflow.git
@@ -65,23 +64,70 @@ The installer:
 
 Restart your terminal or run `source ~/.zshrc` / `source ~/.bashrc` so the commands are available.
 
-## Usage
-
-### 1. Open the native app
+Then open the native app:
 
 ```bash
 agenticflow start
 ```
 
-This opens the native AgenticFlow desktop app. The app bundles the Python engine as a sidecar, so no separate backend is needed.
+If the native bundle has not been built yet, the launcher prints build instructions (see [Build the Desktop App Locally](#build-the-desktop-app-locally) below).
 
-If the bundle has not been built or installed yet, run:
+## Run from Source for Development
+
+This is the fastest way to iterate on the code. It runs the Python backend and the Tauri desktop shell separately.
+
+### 1. Clone the repository
 
 ```bash
-scripts/build-sidecar.sh && npm run tauri build
+git clone https://github.com/fabricciotc/agenticflow.git
+cd agenticflow
 ```
 
-### 2. Link an AI assistant
+### 2. Install Python dependencies
+
+Using `venv`:
+
+```bash
+cd dashboard
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+Or using `uv` (recommended):
+
+```bash
+cd dashboard
+uv venv .venv
+source .venv/bin/activate
+uv pip install -r requirements.txt
+```
+
+### 3. Start the backend server
+
+```bash
+cd dashboard
+python server.py
+```
+
+By default the dashboard is available at `http://localhost:5050`. You can change the port:
+
+```bash
+python server.py --port 8080
+```
+
+### 4. Start the desktop shell in dev mode
+
+In a second terminal, from the repository root:
+
+```bash
+npm install
+npm run tauri dev
+```
+
+This compiles the Rust Tauri app and opens a native window pointing at `http://localhost:5050`. The window auto-reloads when the Rust or frontend code changes. Restart `python server.py` manually when you change Python code.
+
+### 5. Link an AI assistant
 
 The first time the dashboard connects to the local engine it detects which AI CLIs are installed and asks you to pick one. The choice is saved in the application data directory (`config.json`).
 
@@ -94,11 +140,9 @@ Supported options:
 - `copilot` / `gh` — GitHub Copilot CLI
 - `OPENAI_API_KEY` — OpenAI-compatible API backend
 
-### 4. Create a ticket and pick a folder
+### 6. Create a ticket and run the factory
 
 Create a ticket and use **Pick folder** to select the project directory with the native file picker. The full absolute path is used so the local engine can run `git`, builds, and AI CLIs on that folder.
-
-### 5. Run the factory
 
 Move the ticket to **Ready for Work** and the five-phase loop starts.
 
@@ -173,32 +217,38 @@ Assistants that support skills should load `SKILL.md` when the user asks for:
 
 If the assistant does not support native skill discovery, use CLI mode.
 
-## Desktop Development
+## Build the Desktop App Locally
 
-The desktop app is a [Tauri v2](https://v2.tauri.app/) wrapper around the existing Python dashboard. It spawns the Python engine as a sidecar on port `5051` and loads `http://127.0.0.1:5051` in a native window.
+The desktop app is a [Tauri v2](https://v2.tauri.app/) wrapper around the existing Python dashboard. In release mode it spawns the Python engine as a sidecar on port `5051` and loads `http://127.0.0.1:5051` in a native window.
 
-### Build locally
+### Prerequisites
 
-1. Install the tooling:
-   - [Rust](https://rustup.rs/)
-   - [Node.js](https://nodejs.org/) 22+
-   - [uv](https://docs.astral.sh/uv/) (recommended; avoids Anaconda/PyInstaller runtime issues)
+- [Rust](https://rustup.rs/)
+- [Node.js](https://nodejs.org/) 22+
+- Python 3.10+ and `dashboard/requirements.txt` installed
+- `npm install` run once from the repo root
 
-2. Build the Python sidecar:
+### Build the release bundle
+
+1. Build the Python sidecar (a single executable that Tauri bundles):
 
    ```bash
    scripts/build-sidecar.sh      # macOS / Linux
    scripts/build-sidecar.ps1     # Windows
    ```
 
-3. Build and package the desktop app:
+2. Build and package the desktop app:
 
    ```bash
    npm install
    npx tauri build
    ```
 
-   The bundle is written to `src-tauri/target/release/bundle/`.
+3. Open the produced bundle:
+
+   - **macOS**: `src-tauri/target/release/bundle/macos/AgenticFlow.app`
+   - **Windows**: `src-tauri/target/release/bundle/nsis/AgenticFlow.exe`
+   - **Linux**: `src-tauri/target/release/bundle/appimage/AgenticFlow.AppImage`
 
 ### Automatic releases
 
