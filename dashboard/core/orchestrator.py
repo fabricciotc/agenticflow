@@ -25,6 +25,11 @@ from typing import Any, Callable, Dict, List, Optional, Set
 
 from core import pm_analysis
 from core.config import get_max_workers
+from core.dynamic_swarm import (
+    DynamicSwarmDetector,
+    DynamicSwarmExecutor,
+    DynamicSwarmSynthesizer,
+)
 from core.environment import Environment
 from core.models import Message
 from core.paths import get_state_dir
@@ -33,6 +38,7 @@ from core.roles.planner_role import PlannerRole
 from core.roles.engineer_role import EngineerRole
 from core.roles.qa_role import QARole
 from core.roles.swarm_leader_role import SwarmLeaderRole
+from core.roles.ux_designer_role import UXDesignerRole
 from core.plan import BatchScheduler, Task
 from core.roles.dispatcher_role import DispatcherRole
 from core.roles.monitor_role import MonitorRole
@@ -161,10 +167,16 @@ class Orchestrator(threading.Thread):
             "engineer": "engineer",
             "qa_review": "qa",
             "qa_correction": "qa",
+            "dynamic_swarm": "dynamic_swarm",
+            "dynamic_swarm_detect": "dynamic_swarm",
+            "dynamic_swarm_synthesize": "dynamic_swarm",
         }
+        lowered = phase_name.lower()
         for key, role in mapping.items():
-            if key in phase_name.lower():
+            if key in lowered:
                 return role
+        if self.skills_registry and self.skills_registry.has_role(phase_name):
+            return phase_name
         return "engineer"
 
     def _run_ai(self, prompt: str, phase_name: str, timeout_seconds: int, agent_id: Optional[str] = None) -> Optional[str]:
@@ -226,6 +238,16 @@ class Orchestrator(threading.Thread):
                 self._run_phase_1_pm_analysis()
                 if self._should_stop_or_pause():
                     return
+                state["phase"] = "ux_design"
+                self._save_resume_state(state)
+
+            if state.get("phase") == "ux_design":
+                if self._needs_ux_design():
+                    self._run_phase_1_5_ux_design()
+                else:
+                    self.log("Skipping UX Designer phase: ticket does not appear to require UI/UX design.")
+                if self._should_stop_or_pause():
+                    return
                 state["phase"] = "architecture"
                 self._save_resume_state(state)
 
@@ -245,6 +267,13 @@ class Orchestrator(threading.Thread):
 
             if state.get("phase") == "planning":
                 self._run_phase_3_planning()
+                if self._should_stop_or_pause():
+                    return
+                state["phase"] = "dynamic_swarm"
+                self._save_resume_state(state)
+
+            if state.get("phase") == "dynamic_swarm":
+                self._run_phase_3_5_dynamic_swarm()
                 if self._should_stop_or_pause():
                     return
                 state["phase"] = "execution"
@@ -316,6 +345,9 @@ class Orchestrator(threading.Thread):
     def _architecture_path(self) -> Path:
         return self._meta_dir() / "state" / f"architecture-{self.ticket_id}.md"
 
+    def _design_path(self) -> Path:
+        return self._meta_dir() / "state" / f"design-{self.ticket_id}.md"
+
     def _tasks_path(self) -> Path:
         return self._meta_dir() / "state" / f"tasks-{self.ticket_id}.json"
 
@@ -324,6 +356,28 @@ class Orchestrator(threading.Thread):
 
     def _branch(self) -> str:
         return self.ticket.get("branch", "")
+
+    def _swarm_output_dir(self) -> Path:
+        return self._meta_dir() / "dynamic-swarm"
+
+    def _swarm_report_path(self) -> Path:
+        return self._meta_dir() / "state" / f"swarm-report-{self.ticket_id}.md"
+
+    def _build_swarm_context_text(self) -> str:
+        parts: List[str] = []
+        prd_path = self._prd_path()
+        if prd_path.exists():
+            parts.append(f"PRD:\n{prd_path.read_text(encoding='utf-8')}")
+        arch_path = self._architecture_path()
+        if arch_path.exists():
+            parts.append(f"ARCHITECTURE:\n{arch_path.read_text(encoding='utf-8')}")
+        design_path = self._design_path()
+        if design_path.exists():
+            parts.append(f"DESIGN:\n{design_path.read_text(encoding='utf-8')}")
+        tasks_path = self._tasks_path()
+        if tasks_path.exists():
+            parts.append(f"TASKS:\n{tasks_path.read_text(encoding='utf-8')}")
+        return "\n\n---\n\n".join(parts)
 
     def _expand_large_tasks(self, tasks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Decompose tasks marked as large ('L') into parallel subtasks.
@@ -424,6 +478,28 @@ class Orchestrator(threading.Thread):
         except Exception as exc:
             self.log(f"Could not save resume state: {exc}", "warning")
 
+    def _needs_ux_design(self) -> bool:
+        """Heuristic: does this ticket benefit from a dedicated UX design spec?"""
+        text = f"{self.ticket.get('title', '')} {self.ticket.get('description', '')}".lower()
+        ux_keywords = {
+            "ui", "ux", "frontend", "front-end", "screen", "page", "dashboard",
+            "modal", "form", "button", "component", "view", "design", "layout",
+            "navigation", "menu", "wizard", "card", "table", "chart", "icon",
+            "responsive", "mobile", "webapp", "interface", "user flow",
+        }
+        if any(kw in text for kw in ux_keywords):
+            return True
+        # Also check the generated PRD if already available.
+        prd_path = self._prd_path()
+        if prd_path.exists():
+            try:
+                prd_text = prd_path.read_text(encoding="utf-8").lower()
+                if any(kw in prd_text for kw in ux_keywords):
+                    return True
+            except Exception:
+                pass
+        return False
+
     # ------------------------------------------------------------------
     # Phase 1: PM Analysis
     # ------------------------------------------------------------------
@@ -457,6 +533,54 @@ class Orchestrator(threading.Thread):
         self._set_phase("pm-lead", "in-design", 35)
 
     # ------------------------------------------------------------------
+    # Phase 1.5: UX Design (conditional)
+    # ------------------------------------------------------------------
+    def _run_phase_1_5_ux_design(self) -> None:
+        self.log("Phase 1.5/5: UX Design: producing UI/UX spec for the Engineer Squad.")
+        self._set_phase("ux-designer", "in-design", 38)
+        self._ensure_agent("ux-designer", "UX Designer", "lead", "orchestrator", "running", 38)
+
+        prd_path = self._prd_path()
+        design_path = self._design_path()
+
+        if self.env is None:
+            self.env = Environment()
+
+        ux_designer = UXDesignerRole(
+            run_ai=self._run_ai,
+            prd_path=prd_path,
+            design_path=design_path,
+            ticket_title=self.ticket.get("title", ""),
+            ticket_description=self.ticket.get("description", ""),
+            ticket_id=self.ticket_id,
+            phase_name="ux_design",
+            timeout_seconds=600,
+        )
+        self.env.add_role(ux_designer)
+
+        # Trigger with the PRD; if architecture is already available, include it too.
+        metadata: Dict[str, Any] = {"path": str(prd_path), "ticket_id": self.ticket_id}
+        architecture_path = self._architecture_path()
+        if architecture_path.exists():
+            metadata["architecture_path"] = str(architecture_path)
+
+        self.env.publish_message(Message(
+            content=f"PRD ready at {prd_path}; produce UX design spec.",
+            sent_from="orchestrator",
+            cause_by="prd_ready",
+            send_to={"ux-designer"},
+            metadata=metadata,
+        ))
+
+        self._run_environment_rounds()
+
+        design_msg = self._latest_message("ux_design_ready")
+        if design_msg:
+            self._update_agent("ux-designer", status="done", progress=100, log=f"UX design spec saved at {design_msg.metadata.get('path', design_path)}.")
+        else:
+            self._update_agent("ux-designer", status="done", progress=100, log="UX design phase completed.")
+
+    # ------------------------------------------------------------------
     # Phase 2: Architecture
     # ------------------------------------------------------------------
     def _run_phase_2_architecture(self) -> None:
@@ -473,6 +597,7 @@ class Orchestrator(threading.Thread):
             run_ai=self._run_ai,
             prd_path=prd_path,
             architecture_path=architecture_path,
+            design_path=self._design_path(),
             ticket_title=self.ticket.get("title", ""),
             ticket_description=self.ticket.get("description", ""),
             ticket_id=self.ticket_id,
@@ -555,6 +680,7 @@ class Orchestrator(threading.Thread):
             ticket_description=self.ticket.get("description", ""),
             prd_path=self._prd_path(),
             tasks_path=self._tasks_path(),
+            design_path=self._design_path(),
             phase_name="planning",
             timeout_seconds=600,
         )
@@ -600,6 +726,64 @@ class Orchestrator(threading.Thread):
 
         self._update_agent("project-manager", status="done", progress=100, log=f"Generated plan with {len(tasks)} tasks.")
         self._set_phase("project-manager", "in-progress", 65)
+
+    # ------------------------------------------------------------------
+    # Phase 3.5: Dynamic Swarm (optional)
+    # ------------------------------------------------------------------
+    def _run_phase_3_5_dynamic_swarm(self) -> None:
+        config = self.ticket.get("config", {})
+        if not config.get("enable_dynamic_swarm", True):
+            self.log("Dynamic swarm disabled by config; skipping.")
+            return
+
+        self.log("Phase 3.5/5: Dynamic Swarm: selecting specialist subagents.")
+        self._set_phase("dynamic-swarm", "in-design", 67)
+        self._ensure_agent("dynamic-swarm", "Dynamic Swarm", "lead", "orchestrator", "running", 67)
+
+        context_text = self._build_swarm_context_text()
+        detector = DynamicSwarmDetector(
+            run_ai=self._run_ai,
+            skills_registry=self.skills_registry,
+        )
+        role_ids = asyncio.run(detector.detect(self.ticket, context_text))
+
+        if not role_ids:
+            self.log("No dynamic specialists detected; skipping swarm phase.")
+            self._update_agent("dynamic-swarm", status="done", progress=100, log="No specialists needed.")
+            self._set_phase("dynamic-swarm", "in-progress", 70)
+            return
+
+        for role_id in role_ids:
+            self._ensure_agent(role_id, role_id.replace("_", " ").title(), "sub", "dynamic-swarm", "queued", 0)
+
+        self.log(f"Dynamic swarm detected specialists: {', '.join(role_ids)}")
+        output_dir = self._swarm_output_dir()
+        executor = DynamicSwarmExecutor(
+            run_ai=self._run_ai,
+            update_agent=self._update_agent,
+            max_workers=config.get("max_dynamic_swarm_workers", 6),
+            timeout_seconds=config.get("dynamic_swarm_timeout_seconds", 600),
+        )
+        files = asyncio.run(executor.run(self.ticket, role_ids, self.context, output_dir))
+
+        synthesizer = DynamicSwarmSynthesizer(run_ai=self._run_ai)
+        report_path = self._swarm_report_path()
+        try:
+            summary = asyncio.run(synthesizer.synthesize(self.ticket, files, report_path))
+            self.context.set("swarm_findings", {
+                "report_path": str(report_path),
+                "specialists": role_ids,
+                "files": {rid: str(p) for rid, p in files.items()},
+                "summary": summary[:2000],
+            })
+            self.log(f"Dynamic swarm report saved at {report_path}")
+        except Exception as exc:
+            self.log(f"Swarm synthesis failed: {exc}", "warning")
+
+        for role_id in role_ids:
+            self._update_agent(role_id, status="done", progress=100, log=f"{role_id} completed.")
+        self._update_agent("dynamic-swarm", status="done", progress=100, log=f"Swarm completed with {len(role_ids)} specialists.")
+        self._set_phase("dynamic-swarm", "in-progress", 70)
 
     def _fallback_tasks(self) -> List[Dict[str, Any]]:
         title = self.ticket.get("title", "Implementation")
