@@ -136,34 +136,42 @@ jobs:
       - name: Prepare release assets
         shell: bash
         run: |
+          set -e
           mkdir -p release-assets
+          echo "=== Artifact tree ==="
+          find artifacts -maxdepth 2 -type f -o -type d | head -50 || true
 
           # macOS .app bundles -> zip
           for arch in aarch64 x86_64; do
             app_dir="artifacts/AgenticFlow-${arch}.app"
             if [ -d "$app_dir/AgenticFlow.app" ]; then
               (cd "$app_dir" && zip -ry ../release-assets/AgenticFlow_${arch}.app.zip AgenticFlow.app)
+            else
+              echo "Warning: macOS ${arch} .app not found at ${app_dir}/AgenticFlow.app"
             fi
           done
 
           # Windows installer
           win_dir="artifacts/AgenticFlow-windows-x86_64"
           if [ -d "$win_dir" ]; then
-            exe=$(ls "$win_dir"/*.exe | head -n1)
+            exe=$(find "$win_dir" -maxdepth 1 -name "*.exe" | head -n1 || true)
             if [ -n "$exe" ]; then
               cp "$exe" release-assets/AgenticFlow_x86_64-setup.exe
+            else
+              echo "Warning: no Windows .exe found in ${win_dir}"
             fi
           fi
 
           # Linux .deb and .AppImage
           linux_dir="artifacts/AgenticFlow-linux-x86_64"
           if [ -d "$linux_dir" ]; then
-            deb=$(ls "$linux_dir"/*.deb 2>/dev/null | head -n1)
-            appimage=$(ls "$linux_dir"/*.AppImage 2>/dev/null | head -n1)
+            deb=$(find "$linux_dir" -maxdepth 1 -name "*.deb" | head -n1 || true)
+            appimage=$(find "$linux_dir" -maxdepth 1 -name "*.AppImage" | head -n1 || true)
             [ -n "$deb" ] && cp "$deb" release-assets/AgenticFlow_x86_64.deb
             [ -n "$appimage" ] && cp "$appimage" release-assets/AgenticFlow_x86_64.AppImage
           fi
 
+          echo "=== Release assets ==="
           ls -la release-assets
 
       - name: Create GitHub Release
